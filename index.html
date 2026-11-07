@@ -110,7 +110,7 @@
 <body>
 <div class="wrap">
   <h1>哈哈 外送分攤計算機</h1>
-  <p class="sub">依每個人的點單金額比例，分攤外送費與平台費。</p>
+  <p class="sub">外送費、平台費與折扣由所有點單人平均分攤。</p>
 
   <div class="card">
     <h2>1. 訂單金額</h2>
@@ -125,6 +125,10 @@
     <div class="field">
       <label for="platformFee">平台費</label>
       <input type="number" id="platformFee" min="0" step="any" inputmode="decimal" placeholder="例如 15">
+    </div>
+    <div class="field">
+      <label for="discount">折扣金額（選填，填正數，例如折 30 就填 30）</label>
+      <input type="number" id="discount" min="0" step="any" inputmode="decimal" placeholder="沒有折扣可留空">
     </div>
   </div>
 
@@ -147,8 +151,7 @@
         <tr>
           <th>姓名</th>
           <th>點單</th>
-          <th>比例</th>
-          <th>分攤費用</th>
+          <th>平分費用</th>
           <th>應付</th>
         </tr>
       </thead>
@@ -156,7 +159,7 @@
       <tfoot id="tfoot"></tfoot>
     </table>
     <div id="warn" class="msg warn hidden"></div>
-    <p class="hint">分攤費用 = (外送費 + 平台費) × 個人點單 ÷ 所有人點單合計。金額四捨五入到整數，並自動調整尾差，確保加總等於總金額。</p>
+    <p class="hint">平分費用 = (外送費 + 平台費 − 折扣) ÷ 點單人數；應付 = 個人點單 + 平分費用。金額四捨五入到整數，並自動調整尾差，確保加總等於總金額。</p>
   </div>
 </div>
 
@@ -216,6 +219,7 @@
         orderTotal: document.getElementById('orderTotal').value,
         deliveryFee: document.getElementById('deliveryFee').value,
         platformFee: document.getElementById('platformFee').value,
+        discount: document.getElementById('discount').value,
         people: Array.prototype.map.call(peopleEl.querySelectorAll('.person'), function (r) {
           return { name: r.querySelector('.p-name').value, price: r.querySelector('.p-price').value };
         })
@@ -232,6 +236,7 @@
       document.getElementById('orderTotal').value = d.orderTotal || '';
       document.getElementById('deliveryFee').value = d.deliveryFee || '';
       document.getElementById('platformFee').value = d.platformFee || '';
+      document.getElementById('discount').value = d.discount || '';
       (d.people || []).forEach(function (p) { addPerson(p.name, p.price); });
       return (d.people || []).length > 0;
     } catch (e) { return false; }
@@ -242,6 +247,7 @@
     var orderTotal = num(document.getElementById('orderTotal').value);
     var delivery = num(document.getElementById('deliveryFee').value);
     var platform = num(document.getElementById('platformFee').value);
+    var discount = num(document.getElementById('discount').value);
 
     var people = [];
     peopleEl.querySelectorAll('.person').forEach(function (r, i) {
@@ -252,20 +258,21 @@
     });
 
     if (people.length === 0) return showError('請至少新增一位點單人並輸入金額。');
-    if (people.some(function (p) { return p.price < 0; }) || orderTotal < 0 || delivery < 0 || platform < 0)
+    if (people.some(function (p) { return p.price < 0; }) || orderTotal < 0 || delivery < 0 || platform < 0 || discount < 0)
       return showError('金額不可為負數。');
 
+    var n = people.length;
     var sumPrice = people.reduce(function (s, p) { return s + p.price; }, 0);
-    if (sumPrice <= 0) return showError('所有人的點單金額加總必須大於 0。');
 
-    var fee = delivery + platform;
+    // 外送費 + 平台費 − 折扣，由所有人平分
+    var fee = delivery + platform - discount;
     var grandTotal = orderTotal + fee;
     // 若點單金額欄位留空，則以個人點單加總為準
     if (orderTotal === 0) { orderTotal = sumPrice; grandTotal = sumPrice + fee; }
 
-    // 先算每人實際分攤（未四捨五入），再用最大餘數法讓整數加總剛好等於總額
+    // 先算每人實際應付（未四捨五入），再用最大餘數法讓整數加總剛好等於總額
     var exactPays = people.map(function (p) {
-      return p.price + fee * (p.price / sumPrice);
+      return p.price + fee / n;
     });
     var targetTotal = Math.round(sumPrice + fee);
     var floors = exactPays.map(function (v) { return Math.floor(v); });
@@ -279,7 +286,6 @@
     tbody.innerHTML = '';
     var sumShare = 0, sumPay = 0;
     people.forEach(function (p, i) {
-      var ratio = p.price / sumPrice;
       var pay = floors[i];
       var share = pay - p.price;
       sumShare += share;
@@ -288,24 +294,25 @@
       tr.innerHTML =
         '<td>' + esc(p.name) + '</td>' +
         '<td>' + fmt(p.price) + '</td>' +
-        '<td>' + (ratio * 100).toFixed(1) + '%</td>' +
         '<td>' + fmt(share) + '</td>' +
         '<td class="pay">' + fmt(pay) + '</td>';
       tbody.appendChild(tr);
     });
 
     document.getElementById('tfoot').innerHTML =
-      '<tr><td>合計</td><td>' + fmt(sumPrice) + '</td><td>100%</td><td>' + fmt(sumShare) + '</td><td>' + fmt(sumPay) + '</td></tr>';
+      '<tr><td>合計</td><td>' + fmt(sumPrice) + '</td><td>' + fmt(sumShare) + '</td><td>' + fmt(sumPay) + '</td></tr>';
 
     document.getElementById('summary').innerHTML =
       '<div><small>點單金額</small><b>' + fmt(orderTotal) + '</b></div>' +
-      '<div><small>外送費 + 平台費</small><b>' + fmt(fee) + '</b></div>' +
-      '<div class="total"><small>總金額（點單 + 外送費 + 平台費）</small><b>' + fmt(grandTotal) + '</b></div>';
+      '<div><small>外送費 + 平台費</small><b>' + fmt(delivery + platform) + '</b></div>' +
+      '<div><small>折扣</small><b>−' + fmt(discount) + '</b></div>' +
+      '<div><small>人數 / 每人平分</small><b>' + n + ' 人 / ' + fmt(Math.round(fee / n * 100) / 100) + '</b></div>' +
+      '<div class="total"><small>總金額（點單 + 外送費 + 平台費 − 折扣）</small><b>' + fmt(grandTotal) + '</b></div>';
 
     var warn = document.getElementById('warn');
     if (Math.abs(sumPrice - orderTotal) > 0.005) {
       warn.textContent = '注意：個人點單加總（' + fmt(sumPrice) + '）與你輸入的點單金額（' + fmt(orderTotal) +
-        '）不一致，目前分攤比例以個人點單加總計算。';
+        '）不一致，請確認是否有漏填或多填。';
       warn.classList.remove('hidden');
     } else {
       warn.classList.add('hidden');
@@ -324,7 +331,7 @@
   document.getElementById('submitBtn').addEventListener('click', calculate);
   document.getElementById('resetBtn').addEventListener('click', function () {
     if (!confirm('確定要清除所有資料嗎？')) return;
-    ['orderTotal', 'deliveryFee', 'platformFee'].forEach(function (id) {
+    ['orderTotal', 'deliveryFee', 'platformFee', 'discount'].forEach(function (id) {
       document.getElementById(id).value = '';
     });
     peopleEl.innerHTML = '';
